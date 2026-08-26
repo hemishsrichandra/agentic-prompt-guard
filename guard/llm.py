@@ -16,7 +16,7 @@ from typing import Optional
 class OllamaClient:
     def __init__(
         self,
-        model: str = "llama3",
+        model: str = "llama3.2:latest",
         host: str = "http://localhost:11434",
         timeout: float = 30.0,
     ):

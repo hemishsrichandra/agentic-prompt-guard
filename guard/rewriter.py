@@ -89,8 +89,8 @@ _REWRITE_TEMPLATES: dict[ThreatType, str] = {
         "data and exclude patient-level identifying information."
     ),
     ThreatType.OFF_LABEL_PROMOTION: (
-        "Provide neutral, educational information limited to approved "
-        "indications and approved materials, without promoting off-label use."
+        "Provide neutral, educational information limited strictly to approved "
+        "indications and approved materials."
     ),
     ThreatType.MISLEADING_CLAIM: (
         "Provide only substantiated, approved claims supported by appropriate "
@@ -280,7 +280,7 @@ class SafeRewriter:
         if primary_threat is not None:
             rewritten = (
                 f"{_REWRITE_TEMPLATES[primary_threat]} "
-                f"Original task context: {base}."
+                "For safety, restate any necessary context using only compliant, de-identified details."
             )
         else:
             # Generic fallback for threats where appending constraints is
@@ -298,4 +298,5 @@ class SafeRewriter:
                 "appropriate compliance constraints."
             ),
             rewritten_prompt=rewritten,
+            clarification_questions=list(dict.fromkeys(questions)),
         )

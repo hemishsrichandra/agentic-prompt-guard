@@ -78,7 +78,7 @@ use_llm = st.sidebar.toggle(
     value=False,
     help="When off, the deterministic heuristic backend is used — fast and fully offline.",
 )
-model = st.sidebar.text_input("Ollama model", value="llama3", disabled=not use_llm)
+model = st.sidebar.text_input("Ollama model", value="llama3.2:latest", disabled=not use_llm)
 host = st.sidebar.text_input(
     "Ollama host", value="http://localhost:11434", disabled=not use_llm
 )

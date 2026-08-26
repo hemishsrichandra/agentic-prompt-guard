@@ -103,7 +103,7 @@ class PromptGuard:
 
     def __init__(
         self,
-        model: str = "llama3",
+        model: str = "llama3.2:latest",
         use_llm: bool = True,
         host: str = "http://localhost:11434",
         cache_size: int = 256,

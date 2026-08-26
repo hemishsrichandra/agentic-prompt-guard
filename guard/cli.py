@@ -16,7 +16,7 @@ from .pipeline import PromptGuard
 
 
 def _add_common(p: argparse.ArgumentParser) -> None:
-    p.add_argument("--model", default="llama3", help="Ollama model name (default: llama3).")
+    p.add_argument("--model", default="llama3.2:latest", help="Ollama model name (default: llama3.2:latest).")
     p.add_argument("--no-llm", action="store_true", help="Force heuristic fallback; never call Ollama.")
 
 
