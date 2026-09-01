@@ -144,7 +144,7 @@ _JAILBREAK_SIGNATURES: list[str] = [
 
 # Similarity threshold used for the difflib fallback path.
 # The semantic matcher uses its own threshold defined in guard/semantic.py.
-_SIMILARITY_THRESHOLD = 0.72
+_SIMILARITY_THRESHOLD = 0.80
 
 # ---------------------------------------------------------------------------
 # Normalisation functions
