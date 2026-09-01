@@ -61,7 +61,20 @@ Thumbs.db
 *.swp
 *.swo
 
-# ── Large generated datasets (tracked via Git LFS or excluded entirely) ────────
-# The 100k-row CSV is 23 MB; exclude from normal commits — regenerate with:
-#   python generate_dataset.py
+# ── Large datasets (too large for normal git commits) ──────────────────────────
+# Regenerate with: python generate_dataset.py
 generated_pharma_dataset_*.csv
+
+# Training dataset (50 MB) — store locally, do not commit
+train_dataset.csv
+
+# Train/val/test splits produced by scripts/analyze_dataset.py
+data/train_split.csv
+data/val_split.csv
+data/test_split.csv
+data/unique_prompts.csv
+
+# Evaluation reports produced by scripts/analyze_dataset.py
+evaluation_report*.txt
+evaluation_report*.json
+metrics_*.csv

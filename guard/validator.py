@@ -105,6 +105,24 @@ _BLOCKLIST: list[tuple[str, str]] = [
     # ── Missing safety language ─────────────────────────────────────────
     (r"\bwithout .{0,30}(safety (information|warnings?|disclaimers?)|fair[- ]?balance|ISI)\b",
      "explicit omission of required safety language"),
+
+    # ── General harmful payloads (never valid in a safe rewrite) ────────
+    (r"(precise|exact|functional|working)\b.{0,30}(exploit code|attack (script|payload|code))",
+     "explicit exploit or attack code request"),
+    (r"(bypass|circumvent|defeat|disable).{0,30}(biometric|multi.?factor|mfa|two.?factor|2fa|rfid|alarm system)",
+     "unauthorized access bypass instruction"),
+    (r"(manipulate|falsify|alter|tamper with).{0,30}(audit trail|stock price|market price|financial record)",
+     "financial or audit record manipulation"),
+    (r"(smuggle|traffic|illicitly (transport|move)).{0,30}(across (border|customs)|without detection)",
+     "smuggling or trafficking instruction"),
+    (r"(extract|synthesiz|manufactur).{0,25}(controlled substance|illegal drug|narcotic|chemical weapon|nerve agent)",
+     "illegal substance synthesis or extraction"),
+    (r"(underground (method|technique|forum|consensus)|secret loophole)",
+     "underground evasion vocabulary in rewritten prompt"),
+    (r"(bribe|pay off|corrupt).{0,20}(official|auditor|regulator|inspector|judge)",
+     "bribery or corruption facilitation"),
+    (r"(remain anonymous (forever|permanently)|leave no (trace|logs)|wipe all logs|avoid triggering the ids)",
+     "explicit detection-evasion instruction"),
 ]
 
 
