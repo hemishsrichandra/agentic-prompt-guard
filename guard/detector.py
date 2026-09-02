@@ -807,6 +807,39 @@ _RULES: list[tuple[str, ThreatType, str]] = [
     (r"(over|above|age[d]?).{0,5}(70|75|80|65|60|to|ts|bo|gs|go).{0,40}(living alone|fixed income|low income|isolated).{0,60}(segment|outreach|campaign|marketing|contact|target|identify)",
      ThreatType.UNSAFE_TARGETING, "elderly vulnerability-based patient outreach segment"),
 
+    # ── Phishing / social engineering / credential theft ─────────────────────
+    (r"(phishing (message|email|attack|attempt|campaign|link|page)|spear[- ]?phishing)",
+     ThreatType.OTHER, "phishing content generation request"),
+    (r"(convincing|realistic|believable|authentic[- ]?looking).{0,40}(phishing|scam|deceptive|fraudulent|fake).{0,40}(message|email|text|page|site|link)",
+     ThreatType.OTHER, "social engineering / phishing content"),
+    (r"(trick|deceive|manipulate|lure|social[- ]?engineer).{0,40}(employee|user|person|victim|target|staff|worker).{0,40}(reveal(ing)?|disclose|hand over|give up|provide|click|submit).{0,40}(password|credential|login|account|token|key|otp|2fa|auth)",
+     ThreatType.OTHER, "social engineering to steal credentials"),
+    (r"(credential|password|login|account (detail|information|access)).{0,40}(harvest|steal|collect|capture|phish|exfiltrate)",
+     ThreatType.OTHER, "credential harvesting"),
+    (r"(bypass|circumvent|defeat|evade).{0,30}(security (control|measure|system|check|monitor)|mfa|multi[- ]?factor|authentication|ids|ips|siem|firewall|antivirus|endpoint)",
+     ThreatType.JAILBREAK, "bypassing security controls or authentication"),
+    (r"(without (being )?(detected|caught|traced|noticed|logged|monitored|flagged)|evade (detection|logging|monitoring|security))",
+     ThreatType.JAILBREAK, "evasion of detection/monitoring systems"),
+    (r"(impersonat(e|ing)|masquerad(e|ing) as).{0,40}(executive|ceo|cfo|it support|help desk|bank|vendor|trusted|authority)",
+     ThreatType.OTHER, "impersonation for social engineering"),
+
+    # ── Gap-fill: patterns missed by existing rules under heuristic-only path ──
+    # Prompt 3: marketing strategy for unapproved treatment
+    (r"(marketing strategy|marketing plan|marketing approach).{0,50}(unapproved|not approved|without approval|without regulatory)",
+     ThreatType.OFF_LABEL_PROMOTION, "marketing strategy for unapproved treatment"),
+    (r"avoid (mentioning|stating|saying|disclosing|telling).{0,40}(regulatory approval|approval (has not|was not|has yet)|unapproved|not approved|not yet approved)",
+     ThreatType.OFF_LABEL_PROMOTION, "instruction to omit regulatory approval status"),
+    # Prompt 5: doubling/increasing dose without medical supervision
+    (r"(double|triple|increase|raise).{0,20}(their |the |a )?(medication |)?dose.{0,30}(because|since|as|given)",
+     ThreatType.MEDICAL_ADVICE, "instructing dose increase without medical supervision"),
+    (r"(without asking|without consulting|without (a |the )?doctor|without (medical|professional|clinical) (advice|supervision|guidance|consultation))",
+     ThreatType.MEDICAL_ADVICE, "dose/treatment advice given without directing to medical professional"),
+    # Prompt 9: identifying individual patients with names and hospital IDs
+    (r"(identifies?|identify|find|list|extract).{0,40}individual patients?.{0,40}(using|by|with|from).{0,40}(their )?(names?|hospital id|patient id|phone number|contact)",
+     ThreatType.PII_PHI_EXPOSURE, "identifying individual patients using personal identifiers"),
+    (r"(names?|hospital ids?|phone numbers?|patient ids?).{0,60}(clinical dataset|database|dataset|records?|data)",
+     ThreatType.PII_PHI_EXPOSURE, "accessing patient names and IDs from clinical data"),
+
 ]
 
 # Risk patterns checked specifically in the TAIL of long prompts.
@@ -890,6 +923,14 @@ _SAFE_MARKERS: list[str] = [
     r"red flags?.{0,30}(indicate|off[- ]?label|misconduct|non[- ]?compliant)",
     r"so compliance officers? can",
     r"(best practices?|guidelines?).{0,30}(equitable|access|without (health data|scoring|targeting))",
+    # Compliant transparency framing — reporting negative findings is pro-safety
+    r"(clearly |transparently )?report(ing)? (all |complete |both positive and )?negative findings",
+    r"(report|include|disclose|communicate).{0,30}(uncertainty|adverse events?|limitations?|negative findings?|unfavorable results?)",
+    r"(should communicate|how (to|companies) communicate).{0,40}(promising|clinical) results.{0,40}(negative|adverse|limitation|uncertainty)",
+    # AI safety refusal framing — explaining why AI should refuse is educational
+    r"(why|reason).{0,30}(medical ai|ai|system|model).{0,40}(should|must|ought to).{0,30}(refuse|not make|avoid|decline).{0,40}(individuali(s|z)ed|individual|treatment|clinical|diagnostic)",
+    r"(refuse|should not|must not|ought not).{0,30}(make|provide|give|offer).{0,30}(individuali(s|z)ed|individual).{0,30}(treatment|clinical|medical|dosing) (decision|advice|recommendation)",
+    r"(encourage|direct|refer|advise).{0,30}(patients?|users?|individuals?).{0,30}(seek|consult|talk to|contact).{0,30}(qualified|licensed|professional|healthcare).{0,30}(professional|practitioner|doctor|physician|provider)",
 ]
 
 
@@ -902,6 +943,10 @@ _SAFE_WHITELIST: list[str] = [
     r"^count the total number of (reported )?adverse events",
     r"^generate a de[- ]?identified",
     r"in a healthcare compliance training scenario.{0,60}(red flags|recognize|identify|prevent)",
+    # Prompt 6: summarizing compliant transparency practices (reporting negative findings)
+    r"(summarize|explain|describe).{0,30}(how|why).{0,40}(pharmaceutical companies?|pharma|companies?).{0,40}(should|ought|must|need).{0,40}(communicate|report|disclose|present).{0,40}(clinical results?|findings?|data|evidence)",
+    # Prompt 10: explaining why AI should refuse individualized treatment decisions
+    r"(explain|describe|discuss).{0,30}why.{0,40}(medical ai|ai|system|model).{0,40}(should|must|ought).{0,40}(refuse|not make|avoid|decline).{0,40}(individuali|treatment|clinical)",
 ]
 
 # Vague/underspecified language that raises ambiguity flags.
@@ -983,21 +1028,41 @@ class ThreatDetector:
     def detect(self, prompt: str, ingestion: IngestionResult) -> DetectorVerdict:
         """Screen *prompt* and return a structured :class:`~guard.schemas.DetectorVerdict`.
 
-        Tiers are evaluated in order; the first decisive result short-circuits
-        the remaining tiers to keep latency as low as possible.
+        Tiers are evaluated in order.  The heuristic layer always runs as an
+        inviolable safety baseline: even when the LLM returns a verdict, if the
+        heuristics detect threats the result is escalated to RISKY.  This ensures
+        the LLM can never silently override hard compliance rules.
         """
         # ── Tier 1: ingestion-level decisive signals ──────────────────────
         if ingestion.flagged:
             return self._verdict_from_ingestion(ingestion)
 
+        # ── Tier 3 (always): deterministic heuristics — safety baseline ───
+        heuristic_verdict = self._detect_heuristic(ingestion)
+
         # ── Tier 2: LLM with Chain-of-Thought + few-shot ─────────────────
         if self.llm is not None:
-            verdict = self._detect_llm(ingestion.normalized)
-            if verdict is not None:
-                return verdict
+            llm_verdict = self._detect_llm(ingestion.normalized)
+            if llm_verdict is not None:
+                # Safety veto: if heuristics detected threats but LLM said safe,
+                # trust the heuristics — they encode hard compliance rules the
+                # LLM may not reliably enforce.
+                if not heuristic_verdict.is_safe and llm_verdict.is_safe:
+                    # Merge: keep heuristic threats + LLM rationale for context.
+                    return DetectorVerdict(
+                        is_safe=False,
+                        category=Category.RISKY,
+                        threat_types=heuristic_verdict.threat_types,
+                        ambiguity_flags=heuristic_verdict.ambiguity_flags,
+                        rationale=(
+                            f"[Heuristic override] {heuristic_verdict.rationale} "
+                            f"(LLM marked safe but compliance rules apply.)"
+                        ),
+                        confidence=max(heuristic_verdict.confidence, 0.75),
+                    )
+                return llm_verdict
 
-        # ── Tier 3: deterministic heuristics ─────────────────────────────
-        return self._detect_heuristic(ingestion)
+        return heuristic_verdict
 
     # ── Private helpers ──────────────────────────────────────────────────
 

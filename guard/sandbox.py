@@ -53,7 +53,7 @@ class SafeSandbox:
         else:
             response = self._placeholder(safe_prompt)
 
-        redacted, found = _redact(response)
+        redacted, found = _redact(response if isinstance(response, str) else str(response))
         return SandboxResult(response=redacted, output_filtered=bool(found), filtered_items=found)
 
     @staticmethod
