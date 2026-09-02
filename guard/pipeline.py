@@ -220,6 +220,25 @@ class PromptGuard:
             )
             return self._maybe_execute(result, execute)
 
+        # Hard-block threats: blocked unconditionally — no rewrite can rescue them.
+        # Check BEFORE entering the rewriter so the LLM path cannot bypass this.
+        original_hard_block = _HARD_BLOCK_THREATS.intersection(
+            set(verdict.threat_types)
+        )
+        if original_hard_block:
+            blocked_names = ", ".join(t.value for t in original_hard_block)
+            log.append(
+                f"blocked: hard-block threat(s) detected — {blocked_names}"
+            )
+            return GuardResult(
+                prompt=prompt,
+                allowed=False,
+                category=Category.RISKY,
+                path="blocked",
+                detector=verdict,
+                audit_log=log,
+            )
+
         # Remediation loop — step 3: rewrite.
         log.append("route=remediation")
         rewrite = self.rewriter.rewrite(ing.normalized, verdict)
@@ -227,26 +246,6 @@ class PromptGuard:
 
         if rewrite.status in (RewriteStatus.INVALID, RewriteStatus.NEEDS_CLARIFICATION):
             log.append("blocked: no executable rewrite")
-            return GuardResult(
-                prompt=prompt,
-                allowed=False,
-                category=Category.RISKY,
-                path="blocked",
-                detector=verdict,
-                rewrite=rewrite,
-                audit_log=log,
-            )
-
-        # Hard-block threats: the original request must be blocked even when
-        # a safe rewrite exists.  The rewrite is surfaced as guidance only.
-        original_hard_block = _HARD_BLOCK_THREATS.intersection(
-            set(verdict.threat_types)
-        )
-        if original_hard_block:
-            blocked_names = ", ".join(t.value for t in original_hard_block)
-            log.append(
-                f"blocked: hard-block threat(s) in original prompt — {blocked_names}"
-            )
             return GuardResult(
                 prompt=prompt,
                 allowed=False,
