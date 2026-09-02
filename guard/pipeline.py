@@ -32,6 +32,14 @@ from .llm import OllamaClient
 from .rewriter import SafeRewriter
 from .sandbox import SafeSandbox
 from .schemas import Category, GuardResult, RewriteStatus, ThreatType
+
+# Threats that must ALWAYS result in a hard block regardless of whether a
+# safe rewrite can be generated.  For these, the rewrite is produced for
+# user guidance only, but the request itself is never allowed through.
+_HARD_BLOCK_THREATS: frozenset[ThreatType] = frozenset({
+    ThreatType.PII_PHI_EXPOSURE,
+    ThreatType.SAFETY_DATA_TAMPERING,
+})
 from .validator import validate
 
 
@@ -219,6 +227,26 @@ class PromptGuard:
 
         if rewrite.status in (RewriteStatus.INVALID, RewriteStatus.NEEDS_CLARIFICATION):
             log.append("blocked: no executable rewrite")
+            return GuardResult(
+                prompt=prompt,
+                allowed=False,
+                category=Category.RISKY,
+                path="blocked",
+                detector=verdict,
+                rewrite=rewrite,
+                audit_log=log,
+            )
+
+        # Hard-block threats: the original request must be blocked even when
+        # a safe rewrite exists.  The rewrite is surfaced as guidance only.
+        original_hard_block = _HARD_BLOCK_THREATS.intersection(
+            set(verdict.threat_types)
+        )
+        if original_hard_block:
+            blocked_names = ", ".join(t.value for t in original_hard_block)
+            log.append(
+                f"blocked: hard-block threat(s) in original prompt — {blocked_names}"
+            )
             return GuardResult(
                 prompt=prompt,
                 allowed=False,
