@@ -272,6 +272,13 @@ _RULES: list[tuple[str, ThreatType, str]] = [
      ThreatType.PII_PHI_EXPOSURE, "references individual patient identifiers"),
     (r"(patient.?s ).{0,20}(full name|identifying information|personal data)",
      ThreatType.PII_PHI_EXPOSURE, "explicit request for identifying patient data"),
+    # Reversed word order: "names ... of patients", "medical histories of patients"
+    (r"(names?|medical histor(y|ies)|personal data|identifying info).{0,60}(of )?(patients?|individuals?)",
+     ThreatType.PII_PHI_EXPOSURE, "request for patient-identifiable personal or medical data"),
+    (r"(give me|get|retrieve|provide|show|list|pull|extract).{0,60}(names?|medical histor|patient data|patient info|patient record)",
+     ThreatType.PII_PHI_EXPOSURE, "request to retrieve patient-level personal information"),
+    (r"who (received|took|was prescribed|used|had).{0,40}(drug|medication|treatment|therapy|vaccine)",
+     ThreatType.PII_PHI_EXPOSURE, "query identifying patients by drug or treatment received"),
 
     # ── Medical / dosing advice ───────────────────────────────────────────
     (r"patient.*(experienc|might be feeling|symptoms|condition|diagnosis)",
@@ -598,17 +605,35 @@ class ThreatDetector:
     # ── Private helpers ──────────────────────────────────────────────────
 
     def _verdict_from_ingestion(self, ing: IngestionResult) -> DetectorVerdict:
-        """Build a decisive RISKY verdict from ingestion-level signals."""
-        threats: list[ThreatType] = []
-        if ing.signature_hits:
+        """Build a decisive RISKY verdict from ingestion-level signals.
+
+        Pharma-domain threats (PHI, off-label, etc.) are detected first so that
+        a prompt containing both a jailbreak prefix and a pharma payload is
+        labelled with the pharma threat — enabling the rewriter to produce a
+        compliant rewrite instead of returning INVALID.
+        """
+        text = ing.normalized.lower()
+
+        # ── Scan for pharma-domain threats first ─────────────────────────
+        pharma_threats: list[ThreatType] = []
+        for pattern, ttype, _ in _RULES:
+            if ttype in _PHARMA_THREATS and re.search(pattern, text, re.IGNORECASE):
+                if ttype not in pharma_threats:
+                    pharma_threats.append(ttype)
+
+        threats: list[ThreatType] = list(pharma_threats)  # pharma first
+
+        # ── Jailbreak / encoded-payload signals ──────────────────────────
+        if ing.signature_hits and ThreatType.JAILBREAK not in threats:
             threats.append(ThreatType.JAILBREAK)
-        if ing.decoded_payloads:
+        if ing.decoded_payloads and ThreatType.ENCODED_PAYLOAD not in threats:
             threats.append(ThreatType.ENCODED_PAYLOAD)
 
-        text = ing.normalized.lower()
+        # ── Remaining non-pharma rule hits ───────────────────────────────
         for pattern, ttype, _ in _RULES:
-            if re.search(pattern, text, re.IGNORECASE) and ttype not in threats:
-                threats.append(ttype)
+            if ttype not in _PHARMA_THREATS and re.search(pattern, text, re.IGNORECASE):
+                if ttype not in threats:
+                    threats.append(ttype)
 
         if not threats:
             threats = [ThreatType.OTHER]

@@ -180,8 +180,8 @@ class SafeRewriter:
             pharma_rewriteable.intersection(verdict.threat_types)
         )
 
-        # Pure jailbreak / injection / exploit:
-        # there is no known benign pharma task to preserve.
+        # Pure jailbreak / injection / exploit with NO pharma task:
+        # there is no known benign intent to preserve.
         if has_blocking_threat and not has_rewriteable_threat:
             return RewriteResult(
                 status=RewriteStatus.INVALID,
@@ -190,6 +190,14 @@ class SafeRewriter:
                     "no benign intent can be safely preserved."
                 ),
             )
+
+        # Jailbreak prefix + pharma task: the jailbreak component is an attempt
+        # to override safety controls, but the underlying pharma request can
+        # still be safely reframed. Skip directly to the deterministic
+        # pharma-safe rewrite, which transforms the request from scratch and
+        # thus neutralises the jailbreak framing.
+        if has_blocking_threat and has_rewriteable_threat:
+            return self._rewrite_heuristic(prompt, verdict)
 
         # Try the LLM first when available.
         if self.llm is not None:
