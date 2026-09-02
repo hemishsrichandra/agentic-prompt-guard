@@ -221,7 +221,8 @@ class PromptGuard:
             return self._maybe_execute(result, execute)
 
         # Hard-block threats: blocked unconditionally — no rewrite can rescue them.
-        # Check BEFORE entering the rewriter so the LLM path cannot bypass this.
+        # We still run the rewriter to produce a safe-alternative suggestion so the
+        # UI can show "what you should have asked instead", but allowed stays False.
         original_hard_block = _HARD_BLOCK_THREATS.intersection(
             set(verdict.threat_types)
         )
@@ -230,12 +231,17 @@ class PromptGuard:
             log.append(
                 f"blocked: hard-block threat(s) detected — {blocked_names}"
             )
+            # Generate a safe-alternative rewrite for user guidance only.
+            log.append("route=remediation (guidance rewrite only — request blocked)")
+            guidance_rewrite = self.rewriter.rewrite(ing.normalized, verdict)
+            log.append(f"rewrite: status={guidance_rewrite.status.value}")
             return GuardResult(
                 prompt=prompt,
                 allowed=False,
                 category=Category.RISKY,
                 path="blocked",
                 detector=verdict,
+                rewrite=guidance_rewrite,
                 audit_log=log,
             )
 
