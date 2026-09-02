@@ -35,10 +35,26 @@ from .schemas import Category, GuardResult, RewriteStatus, ThreatType
 
 # Threats that must ALWAYS result in a hard block regardless of whether a
 # safe rewrite can be generated.  For these, the rewrite is produced for
-# user guidance only, but the request itself is never allowed through.
+# user guidance only, but the request itself is NEVER allowed through.
+#
+# In a production pharma/compliance system, false-safes (letting a risky
+# prompt slip through as safe) are far more dangerous than false-blocks.
+# Every pharma compliance threat and every explicit bypass/jailbreak signal
+# is therefore unconditionally hard-blocked here.
 _HARD_BLOCK_THREATS: frozenset[ThreatType] = frozenset({
+    # Pharma / clinical compliance — hard-block always
     ThreatType.PII_PHI_EXPOSURE,
     ThreatType.SAFETY_DATA_TAMPERING,
+    ThreatType.OFF_LABEL_PROMOTION,
+    ThreatType.MISLEADING_CLAIM,
+    ThreatType.MEDICAL_ADVICE,
+    ThreatType.UNSAFE_TARGETING,
+    # Explicit bypass / adversarial framing — hard-block always
+    ThreatType.JAILBREAK,
+    ThreatType.ROLEPLAY_EXPLOIT,
+    ThreatType.HYPOTHETICAL_BYPASS,
+    ThreatType.ENCODED_PAYLOAD,
+    ThreatType.PROMPT_OVERLOAD,
 })
 from .validator import validate
 
