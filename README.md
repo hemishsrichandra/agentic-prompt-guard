@@ -145,6 +145,16 @@ the two files concatenate for training. Labels are balanced ~50/50.
 > row level) to avoid train/test leakage. Expand the variable pools or templates
 > in `generate_dataset.py` for more diversity.
 
+## Presentation Deck
+
+The complete system architecture, threat models, heuristic rules, and benchmark dataset distributions are documented in a highly visual 32-slide presentation deck. 
+
+- **Compiled**: Open `Agentic_Prompt_Guard_Deck.pptx` to view the final, exported high-fidelity presentation directly.
+- **Source Code**: The deck is built programmatically using [Slidev](https://sli.dev/) in the `slides.md` file. You can launch a live interactive preview server locally:
+  ```bash
+  npx @slidev/cli slides.md
+  ```
+
 ## Layout
 
 ```
@@ -163,6 +173,8 @@ agentic_prompt_guard/
 ├── app.py                # Streamlit frontend (all stages, one tab each)
 ├── tests/test_pipeline.py
 ├── generate_dataset.py
+├── slides.md             # 32-slide architecture presentation deck (Slidev)
+├── Agentic_Prompt_Guard_Deck.pptx # Compiled high-fidelity presentation export
 ├── data/                 # seed dataset + source PDF & PPTX
 └── generated_pharma_dataset_100000.csv
 ```
