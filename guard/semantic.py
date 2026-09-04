@@ -144,6 +144,25 @@ _singleton: Optional["SemanticMatcher"] = None
 _lock = threading.Lock()
 
 
+def _cosine_scan(attack_vecs: "np.ndarray", query_vec: "np.ndarray") -> "np.ndarray":
+    """Cosine similarity of *query_vec* against every row of *attack_vecs*.
+
+    Both operands are L2-normalised ``float32`` embeddings, so the dot product
+    is mathematically bounded in ``[-1, 1]`` — no real overflow or division can
+    occur.  The ``errstate`` guard suppresses the spurious "divide by zero /
+    overflow / invalid value encountered in matmul" warnings NumPy emits from
+    its SIMD dispatch probe on the first ``float32`` matmul on some BLAS/CPU
+    configurations (e.g. Accelerate on macOS); they are false positives here.
+
+    The result is passed through :func:`np.nan_to_num` so that a genuinely
+    degenerate zero-norm embedding (e.g. an empty prompt, whose normalised
+    vector is all-``NaN``) yields a clean ``0.0`` similarity instead of ``NaN``.
+    """
+    with np.errstate(divide="ignore", over="ignore", invalid="ignore"):
+        scores = attack_vecs @ query_vec
+    return np.nan_to_num(scores, nan=0.0, posinf=0.0, neginf=0.0)
+
+
 class SemanticMatcher:
     """Embedding-based semantic similarity against the known-attack corpus.
 
@@ -200,7 +219,7 @@ class SemanticMatcher:
             show_progress_bar=False,
         )[0]
         # Dot product of two L2-normalised vectors == cosine similarity.
-        scores: "np.ndarray" = self._attack_vecs @ query_vec
+        scores: "np.ndarray" = _cosine_scan(self._attack_vecs, query_vec)
         idx = int(np.argmax(scores))
         score = float(scores[idx])
         return score >= self.threshold, round(score, 4), self.corpus[idx]
@@ -217,7 +236,7 @@ class SemanticMatcher:
             normalize_embeddings=True,
             show_progress_bar=False,
         )[0]
-        scores: "np.ndarray" = self._attack_vecs @ query_vec
+        scores: "np.ndarray" = _cosine_scan(self._attack_vecs, query_vec)
         order = np.argsort(scores)[::-1][:k]
         return [(self.corpus[int(i)], round(float(scores[int(i)]), 4)) for i in order]
 
