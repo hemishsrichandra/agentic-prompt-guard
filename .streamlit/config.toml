@@ -1,0 +1,13 @@
+# Modern theme for the Agentic Prompt Guard dashboard.
+[theme]
+base = "light"
+primaryColor = "#6C4DF6"                 # vivid indigo accent
+backgroundColor = "#FFFFFF"
+secondaryBackgroundColor = "#F5F6FB"     # soft panel / sidebar tint
+textColor = "#191B29"
+linkColor = "#5B3FE3"
+font = "sans-serif"
+baseFontSize = 15
+baseRadius = "0.75rem"                   # rounded inputs, buttons, containers
+borderColor = "#E7E8F2"
+showWidgetBorder = true
