@@ -105,6 +105,7 @@ _LEET: dict[str, str] = {
     "+": "t",
     "8": "b",
     "6": "g",
+    "9": "g",
 }
 
 # ---------------------------------------------------------------------------
@@ -375,11 +376,15 @@ def ingest(prompt: str) -> IngestionResult:
     # Lazy import to avoid circular dependency (semantic imports nothing from guard).
     from .semantic import ATTACK_CORPUS, difflib_similarity, get_matcher
 
+    # Compute similarity on the string BEFORE leetspeak. Leetspeak (e.g. 60kg -> gokg)
+    # destroys pretrained word embeddings, falsely lowering the similarity score.
+    clean_text = after_ws.strip()
+    
     matcher = get_matcher()
     if matcher is not None:
-        _, sim_score, nearest = matcher.match(normalized)
+        _, sim_score, nearest = matcher.match(clean_text)
     else:
-        sim_score, nearest = difflib_similarity(normalized, ATTACK_CORPUS)
+        sim_score, nearest = difflib_similarity(clean_text, ATTACK_CORPUS)
 
     return IngestionResult(
         original=prompt,
