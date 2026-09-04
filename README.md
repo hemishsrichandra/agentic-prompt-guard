@@ -49,7 +49,7 @@ User prompt
 
 ```bash
 pip install -r requirements.txt        # pandas, pydantic, pytest, streamlit
-# optional, for the LLM path:  install Ollama and `ollama pull llama3`
+# optional, for the LLM path:  install Ollama and `ollama pull llama3.2:latest`
 ```
 
 ## Interactive Dashboard (Streamlit)
