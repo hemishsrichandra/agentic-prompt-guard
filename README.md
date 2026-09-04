@@ -48,7 +48,7 @@ User prompt
 ## Install
 
 ```bash
-pip install -r requirements.txt        # pandas, pydantic, pytest, streamlit
+./setup.sh                             # pandas, pydantic, pytest, streamlit
 # optional, for the LLM path:  install Ollama and `ollama pull llama3.2:latest`
 ```
 
