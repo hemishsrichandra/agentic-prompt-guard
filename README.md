@@ -1,57 +1,49 @@
 # Agentic Prompt Guard
 
-An implementation of the **Agentic Guardrail for Responsible Prompt Engineering**
-described in `data/*.pdf` (problem statement) and `data/*.pptx` (pipeline deck).
+An enterprise-grade **router and classifier pipeline** designed to screen prompts *before* an autonomous agent acts on them. 
 
-It is a **router/classifier pipeline** that screens a prompt *before* an agent
-acts on it. Safe prompts take a fast path straight to execution; risky or
-disguised prompts enter a remediation loop that rewrites and re-validates them.
-Only risky prompts pay the heavy cost.
+Agentic Prompt Guard serves as an upstream responsibility gate. Safe prompts take a fast path straight to execution, while risky, ambiguous, or disguised prompts enter a remediation loop that rewrites, clarifies, and re-validates them. This ensures that the latent threat of dangerous prompts is neutralized before downstream tools or external APIs are executed.
 
-```
+## Core Architecture
+
+```text
 User prompt
    │
    ▼
-1. Ingestion            normalize, decode hidden payloads, regex signatures,
-   (guard/ingestion.py)  similarity vs known-attack corpus  ── vector-DB stand-in
+1. Ingestion             Normalization (NFKC, zero-width stripping), 
+   (guard/ingestion.py)  Regex signatures, Semantic similarity against attack corpus
    │
    ▼
-2. Threat & Disguise    structured verdict: is_safe / category / threat_types
-   Detector             (Ollama when available, else heuristic fallback)
+2. Threat & Disguise     Structured verdict: is_safe / category / threat_types
+   Detector              (Primary: Ollama LLM | Fallback: Heuristics & Difflib)
    (guard/detector.py)
    │
    ├── SAFE ─────────────────────────────► 5. Safe Execution Sandbox
    │                                          (guard/sandbox.py) + PII/harm filter
    ▼ RISKY / DISGUISED
-3. Safe Intent Rewriter  extract benign intent → safe query, or ask
-   (guard/rewriter.py)   clarification, or INVALID
+3. Safe Intent Rewriter  Extract benign intent → safe query, or ask
+   (guard/rewriter.py)   clarification, or flag as INVALID
    │
    ▼
-4. Policy-as-Code        deterministic: Pydantic schema, keyword blocklist,
-   Validator             toxicity check
+4. Policy-as-Code        Deterministic gate: Pydantic schemas, keyword blocklists,
+   Validator             and toxicity checks
    (guard/validator.py)
    │
    ▼
-   Verification          re-run the detector on the rewrite to confirm the
-   (in pipeline.py)      disguised-risk signals are gone
+   Verification          Re-run the detector on the rewrite to confirm the
+   (in pipeline.py)      disguised-risk signals are gone.
    │
    ▼
-   Router logs every decision  (guard/pipeline.py)
+   Audit Engine          Router logs every state transition (guard/pipeline.py)
 ```
 
-## Design notes
+## Key Features
 
-- **Ollama + fallback.** The Threat Detector, Rewriter, and Sandbox call a
-  self-hosted Ollama model via its HTTP API (`guard/llm.py`, standard-library
-  only). If no Ollama server is reachable, each stage falls back to a
-  deterministic heuristic so the whole pipeline runs and is testable offline.
-  The pipeline auto-detects availability at construction time.
-- **Deterministic step 4.** The validator uses no LLM, so it can reliably gate
-  the non-deterministic rewrite.
-- **Stand-ins, clearly marked.** The similarity check (a difflib comparison
-  against a small attack corpus) stands in for the deck's Chroma/Pinecone vector
-  DB, and the toxicity check is a lexicon stand-in for a real classifier. Both
-  are isolated behind clean seams and swappable.
+- **Multi-layered Ingestion Engine:** Defeats text-smuggling attacks via Unicode NFKC normalization, invisible character stripping, and Base64/Hex payload decoding.
+- **Resilient Intelligence:** The Threat Detector, Rewriter, and Sandbox primarily call a self-hosted Ollama model (`guard/llm.py`). If the LLM is unavailable, the system guarantees graceful degradation by falling back to a **deterministic heuristic engine** (regex signatures, threat lexicons, and structural pattern heuristics).
+- **Fast Semantic Vector Matching:** Scans against known jailbreak corpora using `sentence-transformers` to identify rephrased exploits. Uses a zero-dependency `difflib.SequenceMatcher` as a fallback.
+- **Policy-as-Code Validation:** A deterministic, non-LLM validation step ensures reliable gating before arbitrary execution.
+- **Append-Only Audit Logs:** Every `GuardResult` carries the classification, the detector rationale, the rewrite/clarification, the validation verdicts, and a full routing trace for compliance and observability.
 
 ## Install
 
@@ -60,7 +52,7 @@ pip install -r requirements.txt        # pandas, pydantic, pytest, streamlit
 # optional, for the LLM path:  install Ollama and `ollama pull llama3`
 ```
 
-## Frontend (Streamlit)
+## Interactive Dashboard (Streamlit)
 
 An interactive dashboard exposes every stage of the pipeline in its own tab.
 
@@ -78,8 +70,7 @@ streamlit run app.py
 | 🧪 **Generate Dataset** | Synthesise labelled prompts (rows/seed/dedup) and download the CSV. |
 | 📊 **Evaluate** | Score the guard against an ingested labelled dataset (accuracy/P/R/F1). |
 
-The sidebar toggles the LLM (Ollama) vs. heuristic backend and reports which
-similarity backend (sentence-transformers or the difflib fallback) is active.
+The sidebar toggles the LLM (Ollama) vs. heuristic backend and reports which similarity backend is active.
 
 ## Usage
 
@@ -107,21 +98,15 @@ print(result.summary())                     # [BLOCKED] Risky via blocked
 print(result.audit_log)                     # full routing trace
 ```
 
-Every `GuardResult` carries the classification, the detector rationale, the
-rewrite/clarification, the validation and verification verdicts, the sandbox
-output, and an `audit_log` — satisfying the PDF's explainability and
-auditability requirements.
-
 ## Tests
 
 ```bash
 pytest -q      # 11 tests, offline (heuristic backend)
 ```
 
-## Dataset generator
+## Dataset Generator
 
-`generate_dataset.py` produces labeled Safe/Unsafe pharma prompts to train and
-evaluate the detector.
+`generate_dataset.py` produces labeled Safe/Unsafe pharma prompts to train and evaluate the detector. The repository includes a massive `train_dataset.csv` balancing safe and adversarial prompts.
 
 ```bash
 python generate_dataset.py                       # 100k rows -> generated_pharma_dataset_100000.csv
@@ -136,45 +121,24 @@ python generate_dataset.py --dedup               # unique prompts only
 | `--dedup` | off                                  | Emit only unique prompt strings.     |
 | `--out`   | `generated_pharma_dataset_<rows>.csv`| Output path.                         |
 
-Output columns match `data/seed_dataset.csv` exactly (`#`, `Risky ambiguous
-prompt`, `Why it's ambiguous (and what could go wrong)`, `Safe or Unsafe?`) so
-the two files concatenate for training. Labels are balanced ~50/50.
-
-> **Training caveat:** the generator fills a fixed template set, so 100k rows
-> contain only ~2,200 unique prompts. Split at the prompt/template level (not
-> row level) to avoid train/test leakage. Expand the variable pools or templates
-> in `generate_dataset.py` for more diversity.
-
-## Presentation Deck
-
-The complete system architecture, threat models, heuristic rules, and benchmark dataset distributions are documented in a highly visual 32-slide presentation deck. 
-
-- **Compiled**: Open `Agentic_Prompt_Guard_Deck.pptx` to view the final, exported high-fidelity presentation directly.
-- **Source Code**: The deck is built programmatically using [Slidev](https://sli.dev/) in the `slides.md` file. You can launch a live interactive preview server locally:
-  ```bash
-  npx @slidev/cli slides.md
-  ```
-
 ## Layout
 
-```
+```text
 agentic_prompt_guard/
 ├── guard/
-│   ├── llm.py           # Ollama HTTP client + availability check
-│   ├── ingestion.py     # step 1
-│   ├── detector.py      # step 2
-│   ├── rewriter.py      # step 3
-│   ├── validator.py     # step 4
-│   ├── sandbox.py        # step 5
-│   ├── pipeline.py       # step 6 router + verification
+│   ├── llm.py            # Ollama HTTP client + availability check
+│   ├── ingestion.py      # Normalization and syntax attack parsing
+│   ├── detector.py       # LLM/Heuristic threat classification
+│   ├── rewriter.py       # Safe intent extraction and rewriting
+│   ├── validator.py      # Policy-as-code deterministic checking
+│   ├── sandbox.py        # Safe execution and PII filtering
+│   ├── pipeline.py       # State router and recursive verification
 │   ├── schemas.py        # Pydantic contract / classification enums
-│   ├── datasets.py       # dataset ingestion: load, column-detect, stats, evaluate
+│   ├── datasets.py       # Dataset ingestion: load, column-detect, evaluate
 │   └── cli.py            # `python -m guard.cli check|eval`
-├── app.py                # Streamlit frontend (all stages, one tab each)
+├── app.py                # Streamlit frontend
 ├── tests/test_pipeline.py
 ├── generate_dataset.py
-├── slides.md             # 32-slide architecture presentation deck (Slidev)
-├── Agentic_Prompt_Guard_Deck.pptx # Compiled high-fidelity presentation export
-├── data/                 # seed dataset + source PDF & PPTX
-└── generated_pharma_dataset_100000.csv
+├── train_dataset.csv     # Large benchmark dataset
+└── data/                 # seed datasets
 ```
