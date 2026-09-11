@@ -258,7 +258,7 @@ _RULES: list[tuple[str, ThreatType, str]] = [
     # ── Off-label promotion ───────────────────────────────────────────────
     (r"\boff[- ]?label\b",
      ThreatType.OFF_LABEL_PROMOTION, "requests off-label content"),
-    (r"\bunapproved (indication|use|application|condition|purpose)\b",
+    (r"\bunapproved (.{0,30} )?(indication|use|application|condition|purpose|treatment|drug|medication|therapy|product)\b",
      ThreatType.OFF_LABEL_PROMOTION, "references unapproved indication or condition"),
     (r"\buse (outside|beyond|not covered by) (approved|label(l?ing)?)\b",
      ThreatType.OFF_LABEL_PROMOTION, "requests use outside approved labelling"),
@@ -345,10 +345,14 @@ _RULES: list[tuple[str, ThreatType, str]] = [
      ThreatType.PII_PHI_EXPOSURE, "personalised outreach using individual patient names"),
     (r"(ehr|electronic health record|electronic medical record).{0,40}(identify|compile|profile|list|individual)",
      ThreatType.PII_PHI_EXPOSURE, "EHR-based individual patient profiling"),
-    (r"(crm|call notes?|rep notes?).{0,40}(extract|pull|find|get).{0,40}(patient|name|mention|side effect)",
-     ThreatType.PII_PHI_EXPOSURE, "CRM note extraction linking patients to side effects by name"),
+    (r"(identify|identifies|list|show|include|create a report).{0,50}(individual patients?|patients in a (clinical|medical) dataset)",
+     ThreatType.PII_PHI_EXPOSURE, "identifying individual patients in a dataset"),
+    (r"(hospital id|hospital ids|phone number|phone numbers).{0,50}(patient|dataset|clinical)",
+     ThreatType.PII_PHI_EXPOSURE, "PHI exposure of patient hospital IDs or phone numbers"),
 
     # ── Medical / dosing advice ───────────────────────────────────────────
+    (r"(tell|advise|instruct|recommend).{0,40}(a patient|patients?|user).{0,50}(double|increase|decrease|change|adjust|stop|alter).{0,30}(their )?(medication|dose|dosage)",
+     ThreatType.MEDICAL_ADVICE, "instructing patient to alter medication dosage without clinical oversight"),
     (r"patient.*(experienc|might be feeling|symptoms|condition|diagnosis)",
      ThreatType.MEDICAL_ADVICE, "invites medical speculation about individual patients"),
     (r"(?<!never )(lower|adjust|change|reduce|increase|modify).{0,20}\b(dose|dosage|mg|medication)\b",
@@ -823,23 +827,93 @@ _RULES: list[tuple[str, ThreatType, str]] = [
     (r"(impersonat(e|ing)|masquerad(e|ing) as).{0,40}(executive|ceo|cfo|it support|help desk|bank|vendor|trusted|authority)",
      ThreatType.OTHER, "impersonation for social engineering"),
 
-    # ── Gap-fill: patterns missed by existing rules under heuristic-only path ──
-    # Prompt 3: marketing strategy for unapproved treatment
-    (r"(marketing strategy|marketing plan|marketing approach).{0,50}(unapproved|not approved|without approval|without regulatory)",
-     ThreatType.OFF_LABEL_PROMOTION, "marketing strategy for unapproved treatment"),
-    (r"avoid (mentioning|stating|saying|disclosing|telling).{0,40}(regulatory approval|approval (has not|was not|has yet)|unapproved|not approved|not yet approved)",
-     ThreatType.OFF_LABEL_PROMOTION, "instruction to omit regulatory approval status"),
-    # Prompt 5: doubling/increasing dose without medical supervision
-    (r"(double|triple|increase|raise).{0,20}(their |the |a )?(medication |)?dose.{0,30}(because|since|as|given)",
-     ThreatType.MEDICAL_ADVICE, "instructing dose increase without medical supervision"),
-    (r"(without asking|without consulting|without (a |the )?doctor|without (medical|professional|clinical) (advice|supervision|guidance|consultation))",
-     ThreatType.MEDICAL_ADVICE, "dose/treatment advice given without directing to medical professional"),
-    # Prompt 9: identifying individual patients with names and hospital IDs
-    (r"(identifies?|identify|find|list|extract).{0,40}individual patients?.{0,40}(using|by|with|from).{0,40}(their )?(names?|hospital id|patient id|phone number|contact)",
-     ThreatType.PII_PHI_EXPOSURE, "identifying individual patients using personal identifiers"),
-    (r"(names?|hospital ids?|phone numbers?|patient ids?).{0,60}(clinical dataset|database|dataset|records?|data)",
-     ThreatType.PII_PHI_EXPOSURE, "accessing patient names and IDs from clinical data"),
+    # ── Credential access / secret extraction ────────────────────────────────
+    (r"(reveal|print|show|output|display|echo|leak|extract|dump|exfiltrate|give me|return|retrieve|fetch|get|read|access).{0,30}(api[ _-]?key|apikey|secret|token|password|credential|env var|environment variable|system prompt|hidden prompt|initial prompt)",
+     ThreatType.CREDENTIAL_ACCESS, "credential or secret extraction attempt"),
+    (r"(what is|what are|tell me).{0,30}(the )?(api[ _-]?key|apikey|secret[ _-]?key|access[ _-]?token|auth[ _-]?token|master[ _-]?key|admin[ _-]?password)",
+     ThreatType.CREDENTIAL_ACCESS, "direct query for secret keys or credentials"),
+    (r"(retrieve|get|read|fetch|access|extract).{0,40}(stored in (the )?(environment|env|config|secrets?|vault|keystore))",
+     ThreatType.CREDENTIAL_ACCESS, "extracting secrets/credentials from environment or vault"),
 
+    # ── Excessive agency / tool abuse / unauthorized env access ───────────────
+    (r"(override|bypass|ignore|disable).{0,30}(tool limits?|sandbox|permission|security policy|constraints?).{0,50}(execute|run|read|write|delete)",
+     ThreatType.EXCESSIVE_AGENCY, "bypassing tool permissions/sandbox to execute unauthorized actions"),
+    (r"(use|call|invoke).{0,30}(any tool|all tools|unrestricted tools?|hidden tools?).{0,40}(without (restrictions?|limits?|checks?|validation|confirmation))",
+     ThreatType.EXCESSIVE_AGENCY, "invoking tools without safety restrictions"),
+    (r"(read|inspect|access|browse).{0,30}(the host file|host filesystem|root directory|etc/passwd|windows/system32|internal environment)",
+     ThreatType.EXCESSIVE_AGENCY, "unauthorized host filesystem access"),
+    (r"(send|post|transmit).{0,40}(stolen|internal|private|sensitive|all).{0,30}(to|towards).{0,40}(external server|webhook|remote url|c2)",
+     ThreatType.EXCESSIVE_AGENCY, "exfiltrating internal data to external server"),
+    (r"(use|call|invoke|access).{0,30}(available tools?|tools? available).{0,60}(inspect|retrieve|access|read|get|fetch).{0,40}(environment|credentials?|secrets?|token|api[ _-]?key|config)",
+     ThreatType.EXCESSIVE_AGENCY, "using agent tools to access environment credentials"),
+    (r"(inspect|scan|enumerate|probe).{0,30}(environment|runtime|host|system|filesystem|container).{0,60}(credentials?|secrets?|token|api[ _-]?key|password|access key)",
+     ThreatType.EXCESSIVE_AGENCY, "probing environment/system for secrets and credentials"),
+    (r"retrieve.{0,40}(whatever|any|all).{0,30}credentials?.{0,40}(required|needed|available|stored)",
+     ThreatType.EXCESSIVE_AGENCY, "retrieve any/all credentials from environment"),
+
+    # ── Physical harm / violence / self-harm ──────────────────────────────────
+    (r"(how to|ways to|guide to|instructions for|help me).{0,30}(harm|injure|hurt|attack|assault|kill|poison|murder|destroy).{0,30}(someone|a person|people|myself|anyone|a coworker|an employee|a child)",
+     ThreatType.PHYSICAL_HARM, "instructions for inflicting physical harm or violence"),
+    (r"(manufacture|synthesize|make|cook|produce|create).{0,30}(lethal dose|deadly poison|toxic gas|chemical weapon|biological weapon|explosive)",
+     ThreatType.PHYSICAL_HARM, "instructions for synthesizing lethal or toxic weapons"),
+    # Direct violent intent without how-to framing
+    (r"\b(i want to|i am going to|i plan to|i intend to|i need to|going to|planning to).{0,20}(kill|murder|harm|hurt|attack|assault|poison|shoot|stab).{0,20}(a man|a woman|a child|someone|a person|people|him|her|them|my|the)",
+     ThreatType.PHYSICAL_HARM, "direct expression of violent intent toward a person"),
+    (r"(cause|make|make another person|force).{0,40}(lose.{0,20}blood|bleed|incapacitated|unconscious)",
+     ThreatType.PHYSICAL_HARM, "instruction or intent to cause severe bleeding or incapacitation"),
+    (r"(how to|ways to|method to|how best to).{0,30}(cause|make).{0,30}(someone|a person|another person|others).{0,30}(to bleed|bleed)",
+     ThreatType.PHYSICAL_HARM, "instructions to cause bleeding"),
+
+    # ── Structural override / rephrased instruction overrides ─────────────────
+    (r"(new rule|from now on|henceforth|new directive|updated instructions?|priority override).{0,50}(ignore|disregard|supersede|replace).{0,30}(all |prior |previous |initial )?(instructions|rules|guidelines|prompt)",
+     ThreatType.JAILBREAK, "structural instruction override injection"),
+    (r"(disregard|ignore|forget).{0,30}(prior|previous|all).{0,30}(instructions|directives|prompts|rules)",
+     ThreatType.JAILBREAK, "rephrased prompt instruction override"),
+    # Paraphrase-based override (treat everything as obsolete / supersede)
+    (r"(treat|consider|mark|regard).{0,30}(everything|all).{0,40}(established|before|prior|previous|earlier|so far).{0,30}(as )?(obsolete|invalid|void|superseded|cancelled|overridden|null)",
+     ThreatType.JAILBREAK, "paraphrase-based instruction override"),
+    (r"(operating|system|prior|previous|earlier)\s+(constraints?|rules?|directives?|instructions?).{0,40}(superseded|overridden|invalid|cancelled|ignored|void)",
+     ThreatType.JAILBREAK, "operating constraints marked as superseded"),
+    (r"proceed\s+using\s+whatever\s+available\s+tools",
+     ThreatType.EXCESSIVE_AGENCY, "unrestricted tool escalation request"),
+    (r"(prioritize|follow|use|apply|act on).{0,30}(the )?(directions?|instructions?|rules?|guidance).{0,30}(that follow|below|next|coming|provided now)",
+     ThreatType.JAILBREAK, "instruction injection replacing prior context"),
+
+    # ── Environment secret & variable extraction ────────────────────────────
+    (r"(inspect|examine|search|scan|check|read|list|show|get|print|display)\s+(all\s+)?(environment\s+variables|\.env|database\s+password|db\s+password|connection\s+string|secret\s+keys?|app\s+secret)",
+     ThreatType.CREDENTIAL_ACCESS, "environment or secret variable extraction attempt"),
+    (r"(\.env|environment\s+file|config\s+file)\b",
+     ThreatType.CREDENTIAL_ACCESS, "request for .env file contents"),
+    (r"(database|db)\s+(password|pass|cred)",
+     ThreatType.CREDENTIAL_ACCESS, "database credential query"),
+    (r"(identify|find)\s+which\s+variable\s+contains.{0,60}(secret|credential|auth|password|token|key)",
+     ThreatType.CREDENTIAL_ACCESS, "identifying secret variable in environment"),
+    (r"provide\s+that\s+variable'?s?\s+value",
+     ThreatType.CREDENTIAL_ACCESS, "extracting environment secret variable value"),
+
+    # ── System prompt leakage & prompt extraction ────────────────────────────
+    (r"(what\s+were|show\s+me|list|print|reveal|tell\s+me|repeat).{0,30}(your\s+)?(original|initial|system)\s+(instructions|directives|prompts?|rules)",
+     ThreatType.JAILBREAK, "system prompt extraction attempt"),
+    (r"repeat\s+(everything|all\s+text|the\s+prompt)\s+(above|prior|before)\s+(this\s+line|this\s+prompt)",
+     ThreatType.JAILBREAK, "prompt duplication / leakage attempt"),
+    (r"new\s+instruction:\s*(reveal|print|show|output|display)",
+     ThreatType.JAILBREAK, "new instruction prompt extraction injection"),
+
+    # ── Authority spoofing & polite jailbreaks ────────────────────────────────
+    (r"(user|caller|i)\s+has\s+(admin|administrator|root)\s+privileges",
+     ThreatType.JAILBREAK, "fake admin privilege assertion"),
+    (r"system:\s*safety\s+guidelines\s+have\s+been\s+updated",
+     ThreatType.JAILBREAK, "fake system message safety update injection"),
+    (r"as\s+your\s+(developer|creator|admin|author).{0,40}(overrid|bypass|ignore|cancel)",
+     ThreatType.JAILBREAK, "developer persona authority spoofing"),
+    (r"i\s+know\s+you\s+have\s+restrictions.{0,60}(ignore|bypass|skip)",
+     ThreatType.JAILBREAK, "polite social-engineering jailbreak"),
+    (r"\bunrestricted\b",
+     ThreatType.JAILBREAK, "unrestricted persona or mode declaration"),
+
+    # ── Denial of Service ────────────────────────────────────────────────────
+    (r"(denial\s+of\s+service|dos|ddos)\s+(attack|script|payload)",
+     ThreatType.JAILBREAK, "denial of service attack request"),
 ]
 
 # Risk patterns checked specifically in the TAIL of long prompts.
@@ -947,6 +1021,18 @@ _SAFE_WHITELIST: list[str] = [
     r"(summarize|explain|describe).{0,30}(how|why).{0,40}(pharmaceutical companies?|pharma|companies?).{0,40}(should|ought|must|need).{0,40}(communicate|report|disclose|present).{0,40}(clinical results?|findings?|data|evidence)",
     # Prompt 10: explaining why AI should refuse individualized treatment decisions
     r"(explain|describe|discuss).{0,30}why.{0,40}(medical ai|ai|system|model).{0,40}(should|must|ought).{0,40}(refuse|not make|avoid|decline).{0,40}(individuali|treatment|clinical)",
+    # Classification / safety analysis wrappers on quoted/embedded samples
+    r"^(classify|evaluate|analyze|assess|check|audit|explain|describe|discuss|identify|what is|why is).{0,80}(following|prompt|input|text|sample|phrase|sentence).{0,60}(as (malicious|benign|safe|harmful)|for (safety|threats?|risks?)|considered|prompt injection|jailbreak|attack|dangerous)",
+    r"^(what|which).{0,40}(safety risk|threat|vulnerability).{0,40}(does the following|does this prompt|is present in)",
+    r"^explain why.{0,80}(is considered|counts as|constitutes|is an example of).{0,60}(prompt injection|jailbreak|attack|manipulation|unsafe)",
+    # Analytical / benchmark / educational wrappers evaluating untrusted prompt samples
+    r"^(i'?m|i am|we are)\s+(writing|building|evaluating|testing|running)\s+a\s+(security\s+)?(benchmark|evaluation|suite|dataset)",
+    r"(evaluate|determine|assess|check)\s+whether\s+an?\s+(agent|model|system|guardrail)\s+should\s+(reject|block|refuse|flag)\s+it",
+    r"^(explain|describe|discuss)\s+how\s+a\s+(security|guardrail|detection|filter|safety)\s+system\s+(should|can|would)\s+(detect|identify|block|flag|handle)",
+    r"do not execute (the|this|following)\s+(instruction|example|prompt|request)",
+    # Compliance & security training safe requests
+    r"^how do i comply with (gdpr|hipaa|privacy|data protection regulations?)",
+    r"^(explain|describe|outline|show)\s+how\s+to\s+recognize\s+(phishing|scam|fraud|suspicious)\s+(emails?|messages?).{0,50}to\s+train\s+(employees|staff|workers|users)",
 ]
 
 # Vague/underspecified language that raises ambiguity flags.
@@ -1025,6 +1111,10 @@ class ThreatDetector:
 
     # ── Public interface ─────────────────────────────────────────────────
 
+    def _is_analytical_wrapper(self, text: str) -> bool:
+        """Return True if prompt is asking to analyze/classify an untrusted sample."""
+        return any(re.search(p, text, re.IGNORECASE) for p in _SAFE_WHITELIST)
+
     def detect(self, prompt: str, ingestion: IngestionResult) -> DetectorVerdict:
         """Screen *prompt* and return a structured :class:`~guard.schemas.DetectorVerdict`.
 
@@ -1033,6 +1123,10 @@ class ThreatDetector:
         heuristics detect threats the result is escalated to RISKY.  This ensures
         the LLM can never silently override hard compliance rules.
         """
+        # ── Check for analytical wrapper first (e.g. "Classify the following prompt: ...") ──
+        if self._is_analytical_wrapper(ingestion.normalized):
+            return self._detect_heuristic(ingestion)
+
         # ── Tier 1: ingestion-level decisive signals ──────────────────────
         if ingestion.flagged:
             return self._verdict_from_ingestion(ingestion)

@@ -114,8 +114,8 @@ _LEET: dict[str, str] = {
 
 _JAILBREAK_SIGNATURES: list[str] = [
     # ── Classic prompt-injection phrases ──────────────────────────────────
-    r"ignore (all )?(previous|prior|above) (instructions|prompts|rules|directives)",
-    r"disregard (the )?(system|previous|prior|all) (prompt|instructions|guidelines|rules)",
+    r"ignore (all )?(previous|prior|above|your) (instructions|prompts|rules|directives|training|restrictions)",
+    r"disregard (the )?(system|previous|prior|all) (prompt|instructions|guidelines|rules|training)",
     r"\bDAN\b",
     r"do anything now",
     r"developer mode",
@@ -124,11 +124,17 @@ _JAILBREAK_SIGNATURES: list[str] = [
     r"you have no (restrictions|rules|guidelines|limits|filters)",
     r"bypass (your )?(safety|content|guardrail|filter|restriction)",
     r"reveal (your )?(system prompt|instructions|training|guidelines)",
+    # Chat template / tag injections
+    r"\[\[\s*(SYSTEM|ADMIN|DEVELOPER|PROMPT)\s*\]\]",
+    r"\[/?INST\]",
+    r"<\|im_(start|end)\|>",
     # ── Forget / override instructions ───────────────────────────────────
     r"(forget|disregard|ignore).{0,20}(everything|what|all).{0,20}"
     r"(told|said|instructed|programmed|trained)",
     r"(act|behave|respond).{0,20}as if.{0,30}(no|without|bypass).{0,20}"
     r"(restriction|limit|filter|rule)",
+    r"(primary directive|new directive).{0,40}(ignore|disregard|override|bypass)",
+    r"remember for all future.{0,40}(ignore|disregard|bypass)",
     # ── Hypothetical / roleplay bypass ───────────────────────────────────
     r"(hypothetically|imagine|suppose|what if|let.?s say|pretend).{0,80}"
     r"(fda|regulation|compliance|safety|rules|law|restriction).{0,50}"
@@ -153,8 +159,11 @@ _SIMILARITY_THRESHOLD = 0.80
 
 
 def _strip_invisibles(text: str) -> str:
-    """Remove zero-width / bidi control chars and apply NFKC normalisation."""
-    return unicodedata.normalize("NFKC", text.translate(_INVISIBLE))
+    """Remove zero-width / bidi control chars, apply NFKC normalisation, and strip chat markup."""
+    t = unicodedata.normalize("NFKC", text.translate(_INVISIBLE))
+    # Strip common LLM chat delimiters (e.g. </s>, [INST], [/INST], [[SYSTEM]], <|im_start|>)
+    t = re.sub(r'</?[a-zA-Z0-9_|-]+>|\[/?INST\]|\[\[SYSTEM\]\]|<\|im_\w+\|>', ' ', t)
+    return t
 
 
 def _apply_homoglyph(text: str) -> str:
@@ -163,32 +172,34 @@ def _apply_homoglyph(text: str) -> str:
 
 
 def _defuse_whitespace_injection(text: str) -> str:
-    """Collapse whitespace-injected strings like 'i g n o r e' into 'ignore'.
+    """Collapse whitespace-injected strings like 'i g n o r e' or 'i.g.n.o.r.e' into 'ignore'.
 
     Detects runs of **3 or more** consecutive single-character tokens separated
-    by single spaces and joins them into one word.  Normal prose (words of
+    by spaces, dots, or dashes, and joins them into one word. Normal prose (words of
     length > 1) is left entirely unchanged.
-
-    Examples
-    --------
-    >>> _defuse_whitespace_injection("i g n o r e all previous instructions")
-    'ignore all previous instructions'
-    >>> _defuse_whitespace_injection("Hello World")
-    'Hello World'
     """
-    tokens = text.split(" ")
+    # Pre-process: convert dots, dashes, or underscores between single letters into spaces
+    cleaned = re.sub(r'(?<=\b[a-zA-Z0-9])[\.\-_]+(?=[a-zA-Z0-9]\b)', ' ', text)
+    # Convert underscores in snake_case attack patterns to spaces (e.g. ignore_all_previous_instructions -> ignore all previous instructions)
+    cleaned = re.sub(r'_+', ' ', cleaned)
+
+    tokens = cleaned.split(" ")
     result: list[str] = []
     i = 0
     while i < len(tokens):
-        # Check if a run of single-char tokens starts here.
+        tok = tokens[i]
+
+        # Single-char token run (e.g., "i g n o r e")
         if (
-            len(tokens[i]) == 1
+            len(tok) == 1
+            and tok.isalnum()
             and i + 2 < len(tokens)
             and len(tokens[i + 1]) == 1
+            and tokens[i + 1].isalnum()
         ):
-            run = [tokens[i]]
+            run = [tok]
             j = i + 1
-            while j < len(tokens) and len(tokens[j]) == 1:
+            while j < len(tokens) and len(tokens[j]) == 1 and tokens[j].isalnum():
                 run.append(tokens[j])
                 j += 1
             if len(run) >= 3:
@@ -197,8 +208,9 @@ def _defuse_whitespace_injection(text: str) -> str:
                 result.extend(run)
             i = j
         else:
-            result.append(tokens[i])
+            result.append(tok)
             i += 1
+
     return " ".join(result)
 
 
