@@ -26,6 +26,7 @@ from __future__ import annotations
 import re
 from typing import Optional
 
+from .heuristics import augment_signals
 from .ingestion import IngestionResult
 from .llm import OllamaClient
 from .schemas import Category, DetectorVerdict, ThreatType
@@ -1033,6 +1034,11 @@ _SAFE_WHITELIST: list[str] = [
     # Compliance & security training safe requests
     r"^how do i comply with (gdpr|hipaa|privacy|data protection regulations?)",
     r"^(explain|describe|outline|show)\s+how\s+to\s+recognize\s+(phishing|scam|fraud|suspicious)\s+(emails?|messages?).{0,50}to\s+train\s+(employees|staff|workers|users)",
+    # ── Educational definition queries (Task 8 false-positive prevention) ────────────────
+    # "What is an API key?" / "What is a password?" — definitional, not extraction
+    r"^what\s+(is|are)\s+an?\s+(api[\s_-]?key|password|credential|secret|token|access\s*token|auth\s*token|encryption\s*key|private\s*key)\b[^.]{0,60}\?$",
+    r"^(define|explain|describe)\s+(what\s+an?|an?)\s+(api[\s_-]?key|password|credential|secret|token)\s+(is|are)",
+    r"^how\s+(do|does|should|can|are)\s+(api[\s_-]?keys?|passwords?|credentials?|secrets?|tokens?)\s+(work|function|be\s+stored|be\s+managed|be\s+protected|be\s+rotated)",
 ]
 
 # Vague/underspecified language that raises ambiguity flags.
@@ -1256,12 +1262,20 @@ class ThreatDetector:
         return verdict
 
     def _detect_heuristic(self, ingestion: IngestionResult) -> DetectorVerdict:
-        """Deterministic heuristic fallback — always available, no LLM needed."""
+        """Deterministic heuristic fallback — always available, no LLM needed.
+
+        First runs the primary regex rule scan (unchanged from v1), then calls
+        the second-pass :func:`~guard.heuristics.augment_signals` engine which
+        adds structural phrase matching, proximity analysis, intent scoring,
+        physical harm detection, credential context scoring, agent/tool abuse
+        detection, signal deduplication, and a structured decision trace.
+        The final verdict is derived from the combined signal set.
+        """
         text = ingestion.normalized.lower()
         threats: list[ThreatType] = []
         reasons: list[str] = []
 
-        # ── Safe whitelist: definitively compliant requests ───────────────
+        # ── Safe whitelist: definitively compliant requests ───────────────────
         if any(re.search(p, text, re.IGNORECASE) for p in _SAFE_WHITELIST):
             return DetectorVerdict(
                 is_safe=True,
@@ -1272,14 +1286,14 @@ class ThreatDetector:
                 confidence=0.92,
             )
 
-        # ── Standard rule scan ────────────────────────────────────────────
+        # ── Primary rule scan ────────────────────────────────────────────────────
         for pattern, ttype, why in _RULES:
             if re.search(pattern, text, re.IGNORECASE):
                 if ttype not in threats:
                     threats.append(ttype)
                 reasons.append(why)
 
-        # ── Tail / prompt-overload scan for long prompts ──────────────────
+        # ── Tail / prompt-overload scan for long prompts ─────────────────────
         if len(text) > _LONG_PROMPT_THRESHOLD:
             tail = text[-_TAIL_WINDOW:]
             for pattern, ttype, why in _TAIL_RULES:
@@ -1288,13 +1302,7 @@ class ThreatDetector:
                         threats.append(ttype)
                     reasons.append(why)
 
-        # ── Strong safe-frame veto ────────────────────────────────────────
-        # When the prompt's primary structure is a defensive/academic/governance
-        # frame (e.g. "What industry standards prevent users from being able
-        # to smuggle..."), general-domain threat hits are cleared because the
-        # harmful keyword describes what is being *prevented or studied*, not
-        # what the agent is asked to do.  Pharma-specific compliance risks
-        # are never vetoed unless an explicit constraint neutralises the specific risk.
+        # ── Strong safe-frame veto ────────────────────────────────────────────
         if threats and any(re.search(p, text, re.IGNORECASE) for p in _STRONG_SAFE_FRAMES):
             pharma_hits = [t for t in threats if t in _PHARMA_THREATS]
             general_hits = [t for t in threats if t not in _PHARMA_THREATS]
@@ -1302,7 +1310,20 @@ class ThreatDetector:
                 threats = []
                 reasons = []
 
-        # ── Safe markers and ambiguity ────────────────────────────────────
+        # ── Second-pass heuristic engine (augment_signals) ───────────────────
+        # Runs AFTER the strong-safe-frame veto so that the existing veto
+        # logic still clears general-domain false positives, but BEFORE the
+        # final verdict so new signals can strengthen or add detections.
+        # Crucially, a later safe classification CANNOT reset threats already
+        # accumulated here — the lists are additive from this point on.
+        extra_threats, extra_reasons, augment_score, trace_str = augment_signals(
+            ingestion, threats, reasons
+        )
+        # Merge: new signals are appended; existing signals are never removed.
+        threats = threats + [t for t in extra_threats if t not in threats]
+        reasons = reasons + extra_reasons
+
+        # ── Safe markers and ambiguity ─────────────────────────────────────
         n_safe = sum(
             1 for p in _SAFE_MARKERS if re.search(p, text, re.IGNORECASE)
         )

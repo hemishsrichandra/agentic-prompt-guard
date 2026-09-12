@@ -23,6 +23,7 @@ import binascii
 import codecs
 import re
 import unicodedata
+import urllib.parse
 from dataclasses import dataclass, field
 
 # ---------------------------------------------------------------------------
@@ -308,6 +309,36 @@ class IngestionResult:
     homoglyph_detected: bool = False
     leetspeak_detected: bool = False
     whitespace_injection_detected: bool = False
+
+    # ── Canonical text surfaces (computed on-demand) ──────────────────────
+
+    @property
+    def compact(self) -> str:
+        """Normalized text lowercased with all whitespace compressed to a single space."""
+        return re.sub(r'\s+', ' ', self.normalized.lower()).strip()
+
+    @property
+    def alphanumeric(self) -> str:
+        """Compact text with all non-[a-z0-9 ] characters removed.
+
+        Useful for structural phrase matching: separators, punctuation, and
+        special characters are collapsed to spaces before comparison.
+        """
+        stripped = re.sub(r'[^a-z0-9 ]', ' ', self.compact)
+        return re.sub(r'\s+', ' ', stripped).strip()
+
+    @property
+    def decoded_text(self) -> str:
+        """Joined text of all base64 / hex / ROT13 decoded payload fragments."""
+        return ' '.join(self.decoded_payloads).lower()
+
+    @property
+    def url_decoded(self) -> str:
+        """Compact text after URL/percent-decode — catches %XX obfuscation."""
+        try:
+            return urllib.parse.unquote(self.compact)
+        except Exception:
+            return self.compact
 
     @property
     def flagged(self) -> bool:
