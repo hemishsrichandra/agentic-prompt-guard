@@ -16,6 +16,8 @@ import difflib
 import html
 import json
 import time
+import urllib.error
+import urllib.request
 from datetime import datetime
 from pathlib import Path
 
@@ -106,6 +108,51 @@ st.markdown(
       .apg-diff ins {background: rgba(33,195,84,.28); text-decoration: none;
                       border-radius: 4px; padding: 0 2px;}
       .apg-example-btn button {font-size: .8rem !important; padding: .25rem .7rem !important;}
+
+      /* Ollama status indicators */
+      .apg-status-pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.45rem;
+        padding: 0.32rem 0.75rem;
+        border-radius: 9999px;
+        font-size: 0.8rem;
+        font-weight: 600;
+        letter-spacing: 0.01em;
+        line-height: 1.2;
+      }
+      .apg-status-online {
+        background: rgba(33, 195, 84, 0.12);
+        color: #117a35;
+        border: 1px solid rgba(33, 195, 84, 0.38);
+      }
+      .apg-status-offline {
+        background: rgba(255, 75, 75, 0.1);
+        color: #c42b2b;
+        border: 1px solid rgba(255, 75, 75, 0.3);
+      }
+      .apg-status-disabled {
+        background: rgba(140, 140, 150, 0.12);
+        color: #555566;
+        border: 1px solid rgba(140, 140, 150, 0.3);
+      }
+      .apg-status-dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        display: inline-block;
+      }
+      .apg-status-dot-online {
+        background: #21c354;
+        box-shadow: 0 0 0 3px rgba(33, 195, 84, 0.25);
+      }
+      .apg-status-dot-offline {
+        background: #ff4b4b;
+        box-shadow: 0 0 0 3px rgba(255, 75, 75, 0.2);
+      }
+      .apg-status-dot-disabled {
+        background: #888899;
+      }
     </style>
     """,
     unsafe_allow_html=True,
@@ -117,8 +164,53 @@ st.markdown(
 # ---------------------------------------------------------------------------
 
 
+@st.cache_data(ttl=10, show_spinner=False)
+def probe_ollama(host: str) -> dict:
+    url = f"{host.rstrip('/')}/api/tags"
+    t0 = time.perf_counter()
+    try:
+        req = urllib.request.Request(url, method="GET")
+        with urllib.request.urlopen(req, timeout=1.5) as resp:
+            latency_ms = max(1, int((time.perf_counter() - t0) * 1000))
+            if resp.status == 200:
+                body = json.loads(resp.read().decode("utf-8"))
+                models = [
+                    m.get("name", "")
+                    for m in body.get("models", [])
+                    if isinstance(m, dict) and m.get("name")
+                ]
+                return {
+                    "online": True,
+                    "latency_ms": latency_ms,
+                    "models": models,
+                    "error": None,
+                    "checked_at": datetime.now().strftime("%H:%M:%S"),
+                }
+            return {
+                "online": False,
+                "latency_ms": latency_ms,
+                "models": [],
+                "error": f"HTTP {resp.status}",
+                "checked_at": datetime.now().strftime("%H:%M:%S"),
+            }
+    except Exception as exc:
+        latency_ms = max(1, int((time.perf_counter() - t0) * 1000))
+        err_msg = str(exc)
+        if "Connection refused" in err_msg or "Errno 61" in err_msg:
+            err_msg = "Connection refused (server not running)"
+        elif "timed out" in err_msg.lower():
+            err_msg = "Connection timed out"
+        return {
+            "online": False,
+            "latency_ms": latency_ms,
+            "models": [],
+            "error": err_msg,
+            "checked_at": datetime.now().strftime("%H:%M:%S"),
+        }
+
+
 @st.cache_resource(show_spinner="Loading guard pipeline…")
-def get_guard(use_llm: bool, model: str, host: str) -> PromptGuard:
+def get_guard(use_llm: bool, model: str, host: str, nonce: int = 0) -> PromptGuard:
     return PromptGuard(model=model, use_llm=use_llm, host=host)
 
 
@@ -342,16 +434,143 @@ def render_history_item(idx: int, entry: dict) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Guard — Ollama by default, silent unless it falls back to heuristics
+# Backend & Guard Setup
 # ---------------------------------------------------------------------------
 
-guard = get_guard(True, "llama3.2:latest", "http://localhost:11434")
+if "ollama_host" not in st.session_state:
+    st.session_state["ollama_host"] = "http://localhost:11434"
+if "ollama_model" not in st.session_state:
+    st.session_state["ollama_model"] = "llama3.2:latest"
+if "use_llm" not in st.session_state:
+    st.session_state["use_llm"] = True
+if "guard_nonce" not in st.session_state:
+    st.session_state["guard_nonce"] = 0
+
+ollama_host = st.session_state["ollama_host"]
+ollama_model = st.session_state["ollama_model"]
+use_llm = st.session_state["use_llm"]
+guard_nonce = st.session_state["guard_nonce"]
+
+ollama_info = probe_ollama(ollama_host)
+guard = get_guard(use_llm, ollama_model, ollama_host, nonce=guard_nonce)
+
+# Auto-sync: if live probe status differs from cached guard status, refresh guard
+if use_llm and (ollama_info["online"] != guard.llm_active):
+    get_guard.clear()
+    st.session_state["guard_nonce"] = guard_nonce + 1
+    guard = get_guard(use_llm, ollama_model, ollama_host, nonce=st.session_state["guard_nonce"])
 
 # ---------------------------------------------------------------------------
-# Sidebar — dataset upload
+# Sidebar — Ollama connection & dataset upload
 # ---------------------------------------------------------------------------
 
 with st.sidebar:
+    st.markdown("### 🤖 Ollama LLM Backend")
+
+    # Status Pill in Sidebar
+    if not use_llm:
+        st.markdown(
+            """
+            <div class="apg-status-pill apg-status-disabled" style="margin-bottom: 0.5rem; width: 100%; justify-content: center;">
+              <span class="apg-status-dot apg-status-dot-disabled"></span>
+              <span>LLM Disabled &middot; Heuristics Active</span>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+    elif ollama_info["online"]:
+        st.markdown(
+            f"""
+            <div class="apg-status-pill apg-status-online" style="margin-bottom: 0.5rem; width: 100%; justify-content: center;">
+              <span class="apg-status-dot apg-status-dot-online"></span>
+              <span>Online &middot; {ollama_info['latency_ms']}ms</span>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+    else:
+        st.markdown(
+            """
+            <div class="apg-status-pill apg-status-offline" style="margin-bottom: 0.5rem; width: 100%; justify-content: center;">
+              <span class="apg-status-dot apg-status-dot-offline"></span>
+              <span>Offline &middot; Heuristics Active</span>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+    btn_check, btn_info = st.columns([1.6, 1])
+    if btn_check.button("Check status", key="btn_check_ollama", icon=":material/refresh:", width="stretch"):
+        probe_ollama.clear()
+        get_guard.clear()
+        st.session_state["guard_nonce"] = st.session_state.get("guard_nonce", 0) + 1
+        st.rerun()
+
+    show_details = btn_info.button("Settings", key="btn_toggle_details", icon=":material/tune:", width="stretch")
+    if show_details:
+        st.session_state["_show_ollama_details"] = not st.session_state.get("_show_ollama_details", False)
+
+    with st.expander("Connection settings", expanded=st.session_state.get("_show_ollama_details", False)):
+        toggled_llm = st.toggle(
+            "Enable LLM backend",
+            value=st.session_state.get("use_llm", True),
+            key="toggle_use_llm",
+            help="When turned off, the prompt guard forces the fast heuristic backend.",
+        )
+        if toggled_llm != st.session_state["use_llm"]:
+            st.session_state["use_llm"] = toggled_llm
+            get_guard.clear()
+            st.session_state["guard_nonce"] += 1
+            st.rerun()
+
+        new_host = st.text_input(
+            "Host URL",
+            value=st.session_state.get("ollama_host", "http://localhost:11434"),
+            key="input_ollama_host",
+        )
+        if new_host != st.session_state["ollama_host"]:
+            st.session_state["ollama_host"] = new_host
+            probe_ollama.clear()
+            get_guard.clear()
+            st.session_state["guard_nonce"] += 1
+            st.rerun()
+
+        available_models = ollama_info.get("models", [])
+        current_model = st.session_state.get("ollama_model", "llama3.2:latest")
+        if ollama_info["online"] and available_models:
+            opts = list(available_models)
+            if current_model not in opts:
+                opts.append(current_model)
+            selected_model = st.selectbox(
+                "Model",
+                options=opts,
+                index=opts.index(current_model),
+                key="select_ollama_model",
+            )
+        else:
+            selected_model = st.text_input(
+                "Model",
+                value=current_model,
+                key="input_ollama_model",
+            )
+        if selected_model != st.session_state["ollama_model"]:
+            st.session_state["ollama_model"] = selected_model
+            get_guard.clear()
+            st.session_state["guard_nonce"] += 1
+            st.rerun()
+
+        st.caption(f"Last checked: {ollama_info.get('checked_at', 'just now')}")
+        if ollama_info["online"]:
+            st.caption(f"Installed models ({len(available_models)}): " + (", ".join(available_models[:4]) or "none listed"))
+        else:
+            st.caption(
+                "**How to start Ollama:**\n"
+                "1. Terminal: `ollama serve`\n"
+                "2. Model: `ollama pull llama3.2:latest`\n"
+                "3. Click **Check status** above"
+            )
+
+    st.divider()
     st.markdown("**Upload dataset**")
     uploaded = st.file_uploader(
         "CSV of prompts (optionally labelled Safe/Unsafe)", type=["csv"]
@@ -404,18 +623,74 @@ with st.sidebar:
 # Header
 # ---------------------------------------------------------------------------
 
-st.markdown('<div class="apg-title">🛡️ Prompt Guard</div>', unsafe_allow_html=True)
-st.markdown(
-    '<div class="apg-tagline">Screen a prompt, see the verdict, the safe rewrite, '
-    'and a deep-dive on why.</div>',
-    unsafe_allow_html=True,
-)
-
-if not guard.llm_active:
-    st.warning(
-        "Ollama isn't reachable — running on the offline heuristic backend instead.",
-        icon=":material/warning:",
+hdr_left, hdr_right = st.columns([1.6, 1.1], vertical_alignment="center")
+with hdr_left:
+    st.markdown('<div class="apg-title">🛡️ Prompt Guard</div>', unsafe_allow_html=True)
+    st.markdown(
+        '<div class="apg-tagline">Screen a prompt, see the verdict, the safe rewrite, '
+        'and a deep-dive on why.</div>',
+        unsafe_allow_html=True,
     )
+with hdr_right:
+    if not use_llm:
+        st.markdown(
+            """
+            <div style="display: flex; flex-direction: column; align-items: flex-end;">
+              <div class="apg-status-pill apg-status-disabled" title="LLM backend disabled by user">
+                <span class="apg-status-dot apg-status-dot-disabled"></span>
+                <span>LLM Disabled</span>
+              </div>
+              <div style="font-size: 0.74rem; opacity: 0.7; margin-top: 0.25rem;">
+                backend: <em>heuristic engine</em>
+              </div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+    elif guard.llm_active:
+        st.markdown(
+            f"""
+            <div style="display: flex; flex-direction: column; align-items: flex-end;">
+              <div class="apg-status-pill apg-status-online" title="Ollama is online on {ollama_host}">
+                <span class="apg-status-dot apg-status-dot-online"></span>
+                <span>Ollama Online &middot; {ollama_info.get('latency_ms', 1)}ms</span>
+              </div>
+              <div style="font-size: 0.74rem; opacity: 0.7; margin-top: 0.25rem;">
+                model: <code>{ollama_model}</code>
+              </div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+    else:
+        st.markdown(
+            """
+            <div style="display: flex; flex-direction: column; align-items: flex-end;">
+              <div class="apg-status-pill apg-status-offline" title="Ollama server not reachable">
+                <span class="apg-status-dot apg-status-dot-offline"></span>
+                <span>Ollama Offline</span>
+              </div>
+              <div style="font-size: 0.74rem; opacity: 0.7; margin-top: 0.25rem;">
+                backend: <em>heuristic fallback</em>
+              </div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+if use_llm and not guard.llm_active:
+    w1, w2 = st.columns([3.8, 1.2], vertical_alignment="center")
+    with w1:
+        st.warning(
+            f"Ollama is offline ({ollama_info.get('error') or 'server unreachable'}) — running on the offline heuristic backend instead.",
+            icon=":material/warning:",
+        )
+    with w2:
+        if st.button("Check Ollama", key="hdr_recheck_btn", icon=":material/refresh:", width="stretch"):
+            probe_ollama.clear()
+            get_guard.clear()
+            st.session_state["guard_nonce"] = st.session_state.get("guard_nonce", 0) + 1
+            st.rerun()
 
 # Apply a pending "reload" value before the widget is instantiated.
 if "_reload_prompt" in st.session_state:
