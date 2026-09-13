@@ -173,23 +173,25 @@ unchanged. A Redis error is logged as a WARNING and never crashes the app.
 
 ## Interactive Dashboard (Streamlit)
 
-An interactive dashboard exposes every stage of the pipeline in its own tab.
+A single-screen UI: one floating prompt box (press Enter to check, Shift+Enter
+for a newline), the verdict, the original + rewritten prompt, a deep-dive
+safety/composition analysis with charts, and a running history of past checks.
 
 ```bash
 streamlit run app.py
 ```
 
-| Tab | What it shows |
-|-----|---------------|
-| 🛡️ **Live Guard** | Full pipeline on a prompt: verdict, threats, rewrite, sandbox, audit log. |
-| 🔬 **Preprocessing** | The normalisation cascade peeling back a disguised prompt, pass by pass. |
-| 🔎 **Regex / Signatures** | Jailbreak signature hits, decoded payloads, and heuristic threat labels. |
-| 🧠 **Embeddings** | Top-k nearest known-attack strings by semantic similarity (bar chart). |
-| 📥 **Dataset Ingestion** | Upload/load a CSV, auto-detect columns, view label distribution + stats. |
-| 🧪 **Generate Dataset** | Synthesise labelled prompts (rows/seed/dedup) and download the CSV. |
-| 📊 **Evaluate** | Score the guard against an ingested labelled dataset (accuracy/P/R/F1). |
+Ollama is used by default (falls back to the offline heuristic backend with a
+visible warning if it isn't reachable — no manual toggle needed). The sidebar
+lets you upload a CSV of prompts to inspect or evaluate the guard against.
 
-The sidebar toggles the LLM (Ollama) vs. heuristic backend and reports which similarity backend is active.
+The previous multi-tab dashboard (Live Guard / Preprocessing / Regex /
+Embeddings / Dataset Ingestion / Generate Dataset / Evaluate, each in its own
+tab) is preserved at `app_dashboard_legacy.py` for reference:
+
+```bash
+streamlit run app_dashboard_legacy.py
+```
 
 ## Usage
 
@@ -255,7 +257,8 @@ agentic_prompt_guard/
 │   ├── schemas.py        # Pydantic contract / classification enums
 │   ├── datasets.py       # Dataset ingestion: load, column-detect, evaluate
 │   └── cli.py            # `python -m guard.cli check|eval`
-├── app.py                # Streamlit frontend
+├── app.py                # Streamlit frontend (single-screen minimal UI)
+├── app_dashboard_legacy.py  # Older multi-tab dashboard, kept for reference
 ├── tests/test_pipeline.py
 ├── generate_dataset.py
 ├── train_dataset.csv     # Large benchmark dataset

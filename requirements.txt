@@ -5,3 +5,4 @@ sentence-transformers>=2.7
 numpy>=1.24
 streamlit>=1.36
 redis>=5.0
+plotly>=5.20

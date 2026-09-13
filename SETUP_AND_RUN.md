@@ -102,19 +102,26 @@ print(result.audit_log)
 
 ## 4b. Run the web UI (Streamlit)
 
-An interactive dashboard exposes every pipeline stage in its own tab. With the
-environment activated:
+A single-screen UI: a floating prompt box (press Enter to check, Shift+Enter
+for a newline), the verdict, the original + rewritten prompt, and a deep-dive
+safety/composition analysis with charts, plus a running history below. With
+the environment activated:
 
 ```bash
 streamlit run app.py
 ```
 
-It opens `http://localhost:8501` in your browser. Tabs: **Live Guard**,
-**Preprocessing**, **Regex / Signatures**, **Embeddings**, **Dataset
-Ingestion**, **Generate Dataset**, and **Evaluate**. The sidebar toggles the
-LLM (Ollama) vs. heuristic backend and reports which similarity backend is
-active. To run headless / on a fixed port: `streamlit run app.py
---server.port 8501 --server.headless true`.
+It opens `http://localhost:8501` in your browser. Ollama is used by default
+and falls back to the offline heuristic backend (with a visible warning) if
+it isn't reachable — no manual toggle needed. The sidebar lets you upload a
+CSV of prompts to inspect or evaluate the guard against. To run headless / on
+a fixed port: `streamlit run app.py --server.port 8501 --server.headless
+true`.
+
+The previous multi-tab dashboard (Live Guard / Preprocessing / Regex /
+Embeddings / Dataset Ingestion / Generate Dataset / Evaluate) is preserved at
+`app_dashboard_legacy.py` if you need it: `streamlit run
+app_dashboard_legacy.py`.
 
 ---
 
@@ -181,6 +188,7 @@ agentic_prompt_guard/
 ├── SETUP_AND_RUN.md         # this file
 ├── PROJECT_REPORT.md        # full project report
 ├── app.py                   # Streamlit web UI (this guide, §4b)
+├── app_dashboard_legacy.py  # older multi-tab dashboard, kept for reference
 ├── guard/                   # the pipeline package (incl. datasets.py ingestion)
 ├── tests/                   # pytest suite
 ├── generate_dataset.py      # synthetic-data generator
