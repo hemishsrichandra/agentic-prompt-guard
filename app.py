@@ -22,12 +22,14 @@ Run with::
 
 from __future__ import annotations
 
+import datetime
 import random
 
 import pandas as pd
 import streamlit as st
 
 from guard import PromptGuard, RewriteStatus, ThreatType
+from guard.cache import get_cache
 from guard.ingestion import ingest, normalization_stages
 from guard.semantic import (
     ATTACK_CORPUS,
@@ -294,6 +296,24 @@ with st.sidebar:
     st.markdown(f":blue-badge[detector · {det}]")
     sim_color = "green" if sim_backend.startswith("sentence") else "orange"
     st.markdown(f":{sim_color}-badge[similarity · {sim_backend}]")
+
+    # Redis cache status badge
+    _cache = get_cache()
+    if _cache is not None and _cache.ping():
+        import os as _os
+        _redis_url = _os.environ.get("REDIS_URL", "redis://localhost:6379")
+        _redis_host = _redis_url.split("@")[-1].split("/")[0]  # strip auth + db
+        st.markdown(f":green-badge[cache · Redis ✓ {_redis_host}]")
+    else:
+        st.markdown(":orange-badge[cache · Redis ✗ disabled]")
+        with st.expander("Enable Redis cache", expanded=False):
+            st.caption(
+                "Set the `REDIS_URL` environment variable before starting the app "
+                "to enable the distributed classification cache.\n\n"
+                "```\n$env:REDIS_URL=\"redis://localhost:6379/0\"\n"
+                "streamlit run app.py\n```"
+            )
+
     if use_llm and not guard.llm_active:
         st.warning("Ollama not reachable — fell back to the heuristic backend.")
 
@@ -355,6 +375,15 @@ def _load_example() -> None:
 
 
 # ── Tab 1: Live Guard ──────────────────────────────────────────────────────
+# Initialise per-session prompt history (list of dicts, newest appended last)
+if "prompt_history" not in st.session_state:
+    st.session_state["prompt_history"] = []
+
+# Apply any pending Re-load value BEFORE the text_area widget is instantiated.
+# Writing directly to "guard_prompt" after the widget renders raises StreamlitAPIException.
+if "_reload_prompt" in st.session_state:
+    st.session_state["guard_prompt"] = st.session_state.pop("_reload_prompt")
+
 with tab_guard:
     st.subheader("Screen a prompt through the full pipeline")
 
@@ -381,6 +410,15 @@ with tab_guard:
             st.error(f"Pipeline error: {exc}")
         else:
             render_verdict(result)
+
+            # Show Redis cache-hit banner when result came from cache.
+            if "cache=redis_hit" in result.audit_log:
+                st.info(
+                    "⚡ **Cache hit** — this result was served from Redis "
+                    "(no pipeline run needed). All fields below reflect the "
+                    "original live classification.",
+                    icon=":material/bolt:",
+                )
 
             left, right = st.columns([1, 1])
             with left:
@@ -423,6 +461,84 @@ with tab_guard:
 
             with st.expander("Full audit log", expanded=False):
                 st.code("\n".join(result.audit_log))
+
+            # ── Save to session-state history ──────────────────────────────
+            _threats = [t.value for t in result.detector.threat_types if t.value != "none"]
+            st.session_state["prompt_history"].append({
+                "ts": datetime.datetime.now().strftime("%H:%M:%S"),
+                "prompt": prompt,
+                "allowed": result.allowed,
+                "confidence": min(max(float(result.detector.confidence), 0.0), 1.0),
+                "category": result.detector.category.value,
+                "threats": _threats,
+                "cache_hit": "cache=redis_hit" in result.audit_log,
+            })
+
+    # ── Recent Prompts History ─────────────────────────────────────────────
+    _history = st.session_state.get("prompt_history", [])
+    if _history:
+        st.divider()
+        h_col1, h_col2 = st.columns([6, 1])
+        h_col1.markdown("### 🕐 Recent Prompts")
+        if h_col2.button("Clear history", icon=":material/delete_sweep:", use_container_width=True):
+            st.session_state["prompt_history"] = []
+            st.rerun()
+
+        st.markdown(
+            """
+            <style>
+              .hist-card {
+                background: rgba(108,77,246,.045);
+                border: 1px solid rgba(108,77,246,.14);
+                border-radius: 14px;
+                padding: .75rem 1.1rem;
+                margin-bottom: .55rem;
+              }
+              .hist-card-safe   {border-left: 4px solid rgba(33,195,84,.75);}
+              .hist-card-unsafe {border-left: 4px solid rgba(255,75,75,.75);}
+              .hist-prompt {
+                font-family: monospace;
+                font-size: .88rem;
+                color: #3a3a4a;
+                white-space: pre-wrap;
+                word-break: break-word;
+                margin: .3rem 0 .1rem;
+              }
+              .hist-meta {font-size: .78rem; opacity: .7;}
+            </style>
+            """,
+            unsafe_allow_html=True,
+        )
+
+        for _idx, _h in enumerate(reversed(_history)):
+            _border = "hist-card-safe" if _h["allowed"] else "hist-card-unsafe"
+            _icon   = "✅" if _h["allowed"] else "⛔"
+            _verdict = "ALLOWED" if _h["allowed"] else "BLOCKED"
+            _cache_tag = " ⚡ cached" if _h["cache_hit"] else ""
+            _threat_str = (" · " + ", ".join(_h["threats"])) if _h["threats"] else ""
+            _preview = _h["prompt"][:160] + ("…" if len(_h["prompt"]) > 160 else "")
+
+            st.markdown(
+                f"""
+                <div class="hist-card {_border}">
+                  <div>
+                    <strong>{_icon} {_verdict}</strong>
+                    &nbsp;<span class="hist-meta">{_h['ts']}{_cache_tag} &middot; {_h['confidence']:.0%} confidence &middot; {_h['category']}{_threat_str}</span>
+                  </div>
+                  <div class="hist-prompt">{_preview}</div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+            # Re-load button: write to staging key so it is applied
+            # before the guard_prompt widget renders on the next run.
+            if st.button(
+                "Re-load prompt",
+                key=f"hist_reload_{_idx}",
+                icon=":material/replay:",
+            ):
+                st.session_state["_reload_prompt"] = _h["prompt"]
+                st.rerun()
 
 
 # ── Tab 2: Preprocessing ───────────────────────────────────────────────────

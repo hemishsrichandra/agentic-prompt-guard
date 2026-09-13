@@ -26,6 +26,7 @@ import threading
 from collections import OrderedDict
 from typing import Optional
 
+from .cache import get_cache
 from .detector import ThreatDetector
 from .ingestion import ingest
 from .llm import OllamaClient
@@ -123,6 +124,20 @@ class PromptGuard:
     cache_size:
         Maximum number of prompt results to keep in the in-memory LRU cache.
         Set to ``0`` to disable caching.
+
+    Redis cache
+    -----------
+    If the ``REDIS_URL`` environment variable is set, ``check()`` probes
+    Redis *before* the in-memory LRU cache and the Ollama pipeline.  On a
+    cache hit the **full** :class:`~guard.schemas.GuardResult` (including
+    rationale, threat types, confidence, all sub-verdicts, and audit_log)
+    is returned directly without running Ollama.  A
+    ``"cache=redis_hit"`` entry is appended to the returned audit_log.
+
+    On a Redis miss the result produced by the live pipeline is stored in
+    Redis with the TTL configured by ``CACHE_TTL`` (default 86400 s).
+    Redis being unavailable never affects the guard — all errors are caught
+    and logged under ``guard.cache``.
     """
 
     def __init__(
@@ -152,6 +167,14 @@ class PromptGuard:
     def check(self, prompt: str, execute: bool = False) -> GuardResult:
         """Screen *prompt* synchronously.
 
+        Lookup order:
+          1. **Redis cache** (cross-process, TTL-backed) — returns the full
+             :class:`~guard.schemas.GuardResult` on a hit, with a
+             ``"cache=redis_hit"`` entry appended to ``audit_log``.
+          2. **In-memory LRU cache** (per-process, unbounded by time) — fast
+             path for repeated calls within the same process lifetime.
+          3. **Live pipeline** — Ollama → heuristics as before.
+
         Parameters
         ----------
         prompt:
@@ -166,14 +189,28 @@ class PromptGuard:
             Full decision record including category, allowed/blocked verdict,
             rewrite (if any), and an append-only ``audit_log``.
         """
+        # ── Layer 1: Redis distributed cache ─────────────────────────────
+        _redis = get_cache()
+        if _redis is not None:
+            redis_hit = _redis.get(prompt)
+            if redis_hit is not None:
+                return redis_hit
+
+        # ── Layer 2: In-process LRU cache ────────────────────────────────
         if self._cache is not None:
             key = self._cache_key(prompt, execute)
             cached = self._cache.get(key)
             if cached is not None:
                 return cached
 
+        # ── Layer 3: Full pipeline ────────────────────────────────────────
         result = self._check_impl(prompt, execute)
 
+        # Store in Redis (full GuardResult JSON, TTL-backed).
+        if _redis is not None:
+            _redis.set(prompt, result)
+
+        # Store in local LRU.
         if self._cache is not None:
             self._cache.put(key, result)
 
