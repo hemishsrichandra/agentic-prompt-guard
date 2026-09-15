@@ -915,6 +915,11 @@ _RULES: list[tuple[str, ThreatType, str]] = [
     # ── Denial of Service ────────────────────────────────────────────────────
     (r"(denial\s+of\s+service|dos|ddos)\s+(attack|script|payload)",
      ThreatType.JAILBREAK, "denial of service attack request"),
+    # ── PHI: explicit identifiers + individual record retrieval ──
+    (r"\b(ssn|social security number|insurance id|medical record number|mrn)\b",
+     ThreatType.PII_PHI_EXPOSURE, "explicit sensitive identifier requested"),
+    (r"(pull up|retrieve|fetch|show|give me|access).{0,40}(full |complete |entire )?(medical|health|patient|ehr)\s*record",
+     ThreatType.PII_PHI_EXPOSURE, "individual medical record retrieval"),
 ]
 
 # Risk patterns checked specifically in the TAIL of long prompts.

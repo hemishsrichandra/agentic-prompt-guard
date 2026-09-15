@@ -222,12 +222,12 @@ print(result.audit_log)                     # full routing trace
 ## Tests
 
 ```bash
-pytest -q      # 11 tests, offline (heuristic backend)
+pytest -q      # 142 tests (138 pass + 1 skip offline; 3 UI smoke tests need streamlit)
 ```
 
 ## Dataset Generator
 
-`generate_dataset.py` produces labeled Safe/Unsafe pharma prompts to train and evaluate the detector. The repository includes a massive `train_dataset.csv` balancing safe and adversarial prompts.
+`generate_dataset.py` produces labeled Safe/Unsafe pharma prompts to train and evaluate the detector. The repo ships `data/seed_dataset.csv` as a small labelled seed set; larger sets are generated on demand.
 
 ```bash
 python generate_dataset.py                       # 100k rows -> generated_pharma_dataset_100000.csv
@@ -261,6 +261,6 @@ agentic_prompt_guard/
 ├── app_dashboard_legacy.py  # Older multi-tab dashboard, kept for reference
 ├── tests/test_pipeline.py
 ├── generate_dataset.py
-├── train_dataset.csv     # Large benchmark dataset
+
 └── data/                 # seed datasets
 ```

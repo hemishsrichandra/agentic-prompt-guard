@@ -165,11 +165,11 @@ via `python -m guard.cli eval`:
 
 | Dataset | Accuracy | Precision | Recall | F1 |
 |---------|----------|-----------|--------|----|
-| Seed (20 curated prompts) | 0.95 | 1.00 | 0.90 | 0.95 |
+| Seed (20 curated prompts) | 0.90 | 0.90 | 0.90 | 0.90 |
 | Generated (2,000-row sample) | 0.76 | 0.78 | 0.72 | 0.75 |
 
-**Interpretation.** The heuristics score highly on the curated seed set (perfect
-precision — no safe prompt wrongly blocked). On the generated set, recall drops
+**Interpretation.** The heuristics score well on the curated seed set (one false
+positive — one safe prompt wrongly blocked). On the generated set, recall drops
 because those templates use phrasings the heuristic rules were not tuned for;
 this is expected, since the heuristics are a *fallback* and the LLM detector is
 the intended primary classifier. The gap also quantifies the value the LLM path
@@ -234,7 +234,7 @@ self-hosted LLM and production-grade components.
 ```
 agentic_prompt_guard/
 ├── guard/            llm · ingestion · detector · rewriter · validator · sandbox · pipeline · schemas · cli
-├── tests/            test_pipeline.py (11 tests)
+├── tests/            test_pipeline.py · test_heuristic_hardening.py · test_app_smoke.py (142 tests)
 ├── generate_dataset.py
 ├── data/             seed_dataset.csv + source PDF & PPTX
 ├── generated_pharma_dataset_100000.csv
